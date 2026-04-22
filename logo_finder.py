@@ -152,11 +152,99 @@ def search_worldvectorlogo(query: str) -> list[dict]:
                 "source": "World Vector Logo",
                 "content": content,
             })
-            break  # take the first match; numbered variants are style variations
+    # Reverse so higher-numbered (newer) variants appear first
+    results.reverse()
     return results
 
 
-# ── Source 3: Clearbit Logo API ───────────────────────────────────────────────
+# ── Source 3: Wikipedia article logos ────────────────────────────────────────
+
+_WIKI_API = "https://en.wikipedia.org/w/api.php"
+_COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+_WIKI_HEADERS = {**HEADERS, "User-Agent": "CompanyLogoFinder/1.0 (contact@example.com)"}
+
+def search_wikimedia(query: str) -> list[dict]:
+    results = []
+    try:
+        # Step 1: find the Wikipedia article title
+        r = requests.get(_WIKI_API, params={
+            "action": "query", "list": "search", "srsearch": query,
+            "format": "json", "srlimit": 1,
+        }, timeout=8, headers=_WIKI_HEADERS)
+        hits = r.json().get("query", {}).get("search", [])
+        if not hits:
+            return results
+        article_title = hits[0]["title"]
+
+        # Step 2: get all images used in the article
+        r2 = requests.get(_WIKI_API, params={
+            "action": "parse", "page": article_title,
+            "prop": "images", "format": "json",
+        }, timeout=8, headers=_WIKI_HEADERS)
+        images = r2.json().get("parse", {}).get("images", [])
+
+        # Keep SVGs that contain "logo" and belong to the company (not Wiki system files)
+        system = {"commons-logo", "wikinews-logo", "wikiquote-logo", "wikibooks-logo",
+                  "wikiversity-logo", "wiktionary-logo", "wikivoyage-logo"}
+        q_slug = re.sub(r"[^a-z0-9]", "", query.lower())
+        logo_svgs = [
+            img for img in images
+            if img.lower().endswith(".svg")
+            and "logo" in img.lower()
+            and img.lower().replace("-", "").replace("_", "").replace(" ", "").split(".")[0] not in system
+        ]
+
+        if not logo_svgs:
+            return results
+
+        # Step 3: rank — prefer most recent year, then no year, skip "Historical"
+        def _svg_rank(name: str):
+            n = name.lower()
+            if "historical" in n or "wordmark" in n:
+                return (1, 0)
+            years = re.findall(r"\b(19|20)\d{2}\b", name)
+            return (0, -int(years[-1])) if years else (0, 1)
+
+        logo_svgs.sort(key=_svg_rank)
+
+        # Step 4: fetch URLs for top candidates
+        file_titles = [f"File:{img}" for img in logo_svgs[:4]]
+        r3 = requests.get(_WIKI_API, params={
+            "action": "query", "titles": "|".join(file_titles),
+            "prop": "imageinfo", "iiprop": "url", "format": "json",
+        }, timeout=8, headers=_WIKI_HEADERS)
+        pages = r3.json().get("query", {}).get("pages", {}).values()
+
+        # Preserve the ranked order
+        url_map = {}
+        for page in pages:
+            info = page.get("imageinfo", [])
+            if info:
+                # Wikipedia normalises spaces↔underscores; store with underscores so
+                # our lookup keys (built with underscores) always match.
+                title = page.get("title", "").replace(" ", "_")
+                url_map[title] = info[0]["url"]
+
+        for ft in file_titles:
+            url = url_map.get(ft.replace(" ", "_"))
+            if not url:
+                continue
+            content = _fetch_svg(url)
+            if content:
+                name = ft.replace("File:", "").rsplit(".", 1)[0].replace("_", " ")
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "format": "svg",
+                    "source": "Wikipedia",
+                    "content": content,
+                })
+    except Exception:
+        pass
+    return results
+
+
+# ── Source 4: Clearbit Logo API ───────────────────────────────────────────────
 
 def search_clearbit(query: str, domain: Optional[str] = None) -> list[dict]:
     domains = [domain] if domain else _guess_domains(query)[:6]
@@ -257,6 +345,7 @@ def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
     results: list[dict] = []
 
     results.extend(search_simple_icons(query))
+    results.extend(search_wikimedia(query))
     results.extend(search_worldvectorlogo(query))
 
     if website_url:
