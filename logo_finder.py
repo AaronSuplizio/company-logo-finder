@@ -50,9 +50,10 @@ def _guess_domains(query: str) -> list[str]:
 
 # ── Source 1: Simple Icons ────────────────────────────────────────────────────
 
+# JSON is now a bare array: [{title, hex, slug?, ...}, ...]
 _SIMPLE_ICONS_JSON = (
     "https://raw.githubusercontent.com/simple-icons/simple-icons"
-    "/develop/_data/simple-icons.json"
+    "/develop/data/simple-icons.json"
 )
 _SIMPLE_ICONS_CDN = "https://cdn.simpleicons.org/{slug}"
 
@@ -69,11 +70,12 @@ def _fetch_svg(url: str) -> Optional[bytes]:
 def search_simple_icons(query: str) -> list[dict]:
     results = []
 
-    # Fuzzy match against the full icon dataset
     try:
         r = requests.get(_SIMPLE_ICONS_JSON, timeout=10, headers=HEADERS)
         if r.status_code == 200:
-            icons = r.json().get("icons", [])
+            data = r.json()
+            # Handle both old {"icons": [...]} and new bare-array formats
+            icons = data if isinstance(data, list) else data.get("icons", [])
             q = query.lower().strip()
             ranked = []
             for icon in icons:
@@ -81,7 +83,9 @@ def search_simple_icons(query: str) -> list[dict]:
                 t = title.lower()
                 if t == q:
                     ranked.insert(0, (0, icon))
-                elif q in t or t in q:
+                # Substring match only when both sides are substantial (≥4 chars)
+                # to avoid short titles like "C" or "R" matching inside longer queries
+                elif len(t) >= 4 and len(q) >= 4 and (q in t or t in q):
                     ranked.append((1, icon))
             for _, icon in ranked[:5]:
                 slug = icon.get("slug") or _simple_slug(icon["title"])
@@ -122,26 +126,34 @@ def search_simple_icons(query: str) -> list[dict]:
 _WVL_CDN = "https://cdn.worldvectorlogo.com/logos/{slug}.svg"
 
 def search_worldvectorlogo(query: str) -> list[dict]:
-    candidates = list({
+    base_candidates = list(dict.fromkeys(filter(None, [
         _hyphen_slug(query),
         _simple_slug(query),
-        # Try removing common suffixes
         _hyphen_slug(re.sub(r"\b(inc|llc|ltd|corp|co)\b", "", query, flags=re.I).strip()),
-    })
-    for candidate in candidates:
-        if not candidate:
-            continue
-        url = _WVL_CDN.format(slug=candidate)
+    ])))
+
+    # For each base slug, try plain then numbered variants (-1 through -5)
+    # WVL uses numbered variants for logos with multiple versions
+    slugs_to_try = []
+    for base in base_candidates:
+        slugs_to_try.append(base)
+        for n in range(1, 6):
+            slugs_to_try.append(f"{base}-{n}")
+
+    results = []
+    for slug in slugs_to_try:
+        url = _WVL_CDN.format(slug=slug)
         content = _fetch_svg(url)
         if content:
-            return [{
+            results.append({
                 "name": query,
                 "url": url,
                 "format": "svg",
                 "source": "World Vector Logo",
                 "content": content,
-            }]
-    return []
+            })
+            break  # take the first match; numbered variants are style variations
+    return results
 
 
 # ── Source 3: Clearbit Logo API ───────────────────────────────────────────────
@@ -235,10 +247,6 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
     except Exception:
         pass
 
-    # Also try Clearbit with the real domain
-    domain = urlparse(website_url).netloc.lstrip("www.")
-    results.extend(search_clearbit(query or domain, domain=domain))
-
     return results
 
 
@@ -250,7 +258,6 @@ def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
 
     results.extend(search_simple_icons(query))
     results.extend(search_worldvectorlogo(query))
-    results.extend(search_clearbit(query))
 
     if website_url:
         results.extend(search_website(website_url, query=query))
