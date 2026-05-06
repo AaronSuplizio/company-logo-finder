@@ -21,9 +21,12 @@ CREATE TABLE IF NOT EXISTS logos (
     url          TEXT    UNIQUE,
     content      BLOB    NOT NULL,
     accept_count INTEGER NOT NULL DEFAULT 1,
+    downvoted    INTEGER NOT NULL DEFAULT 0,
     last_accepted TEXT   NOT NULL DEFAULT (datetime('now'))
 )
 """
+
+_MIGRATION = "ALTER TABLE logos ADD COLUMN downvoted INTEGER NOT NULL DEFAULT 0"
 
 
 def _normalize(query: str) -> str:
@@ -34,6 +37,10 @@ def _connect() -> sqlite3.Connection:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(_DB_PATH)
     conn.execute(_DDL)
+    try:
+        conn.execute(_MIGRATION)
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     return conn
 
@@ -61,9 +68,10 @@ def get_logos(query: str, limit: int = 5) -> list[dict]:
             """
             SELECT name, source_orig, format, url, content, accept_count
             FROM logos
-            WHERE query_key = ?
-               OR instr(query_key, ?) > 0
-               OR instr(?, query_key) > 0
+            WHERE downvoted = 0
+              AND (query_key = ?
+                   OR instr(query_key, ?) > 0
+                   OR instr(?, query_key) > 0)
             ORDER BY accept_count DESC
             LIMIT ?
             """,
@@ -83,3 +91,17 @@ def get_logos(query: str, limit: int = 5) -> list[dict]:
             "cached": True,
         })
     return results
+
+
+def downvote_logo(query: str, logo: dict) -> None:
+    key = _normalize(query)
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO logos (query_key, name, source_orig, format, url, content, accept_count, downvoted)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+            ON CONFLICT(url) DO UPDATE SET downvoted = 1
+            """,
+            (key, logo["name"], logo.get("source_orig", logo["source"]),
+             logo["format"], logo["url"], logo["content"]),
+        )
