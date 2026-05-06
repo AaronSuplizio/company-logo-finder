@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
@@ -20,7 +21,7 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     )
 }
-TIMEOUT = 8
+TIMEOUT = 5
 
 # ── Slug helpers ──────────────────────────────────────────────────────────────
 
@@ -87,18 +88,25 @@ def search_simple_icons(query: str) -> list[dict]:
                 # to avoid short titles like "C" or "R" matching inside longer queries
                 elif len(t) >= 4 and len(q) >= 4 and (q in t or t in q):
                     ranked.append((1, icon))
-            for _, icon in ranked[:5]:
+            top = ranked[:5]
+            def _fetch_icon(item):
+                _, icon = item
                 slug = icon.get("slug") or _simple_slug(icon["title"])
                 url = _SIMPLE_ICONS_CDN.format(slug=slug)
                 content = _fetch_svg(url)
-                if content:
-                    results.append({
-                        "name": icon["title"],
-                        "url": url,
-                        "format": "svg",
-                        "source": "Simple Icons",
-                        "content": content,
-                    })
+                return (icon["title"], url, content) if content else None
+
+            with ThreadPoolExecutor(max_workers=len(top)) as ex:
+                for res in ex.map(_fetch_icon, top):
+                    if res:
+                        title, url, content = res
+                        results.append({
+                            "name": title,
+                            "url": url,
+                            "format": "svg",
+                            "source": "Simple Icons",
+                            "content": content,
+                        })
     except Exception:
         pass
 
@@ -132,29 +140,24 @@ def search_worldvectorlogo(query: str) -> list[dict]:
         _hyphen_slug(re.sub(r"\b(inc|llc|ltd|corp|co)\b", "", query, flags=re.I).strip()),
     ])))
 
-    # For each base slug, try plain then numbered variants (-1 through -5)
-    # WVL uses numbered variants for logos with multiple versions
+    # For each base slug, try plain then numbered variants (-1 through -3)
     slugs_to_try = []
     for base in base_candidates:
         slugs_to_try.append(base)
-        for n in range(1, 6):
+        for n in range(1, 4):
             slugs_to_try.append(f"{base}-{n}")
 
-    results = []
-    for slug in slugs_to_try:
+    def _try_wvl(slug: str):
         url = _WVL_CDN.format(slug=slug)
         content = _fetch_svg(url)
-        if content:
-            results.append({
-                "name": query,
-                "url": url,
-                "format": "svg",
-                "source": "World Vector Logo",
-                "content": content,
-            })
-    # Reverse so higher-numbered (newer) variants appear first
-    results.reverse()
-    return results
+        return {"name": query, "url": url, "format": "svg",
+                "source": "World Vector Logo", "content": content} if content else None
+
+    with ThreadPoolExecutor(max_workers=len(slugs_to_try)) as ex:
+        hits = [r for r in ex.map(_try_wvl, slugs_to_try) if r]
+
+    hits.reverse()  # higher-numbered (newer) variants first
+    return hits
 
 
 # ── Source 3: Wikipedia article logos ────────────────────────────────────────
@@ -269,6 +272,25 @@ def search_clearbit(query: str, domain: Optional[str] = None) -> list[dict]:
 
 # ── Source 4: Website scraping ────────────────────────────────────────────────
 
+# URL substrings that identify CMS/platform assets, not the company's own logo
+_SCRAPE_BLOCKLIST = (
+    "drupal", "wordpress", "wp-content", "wp-includes",
+    "joomla", "magento", "shopify", "squarespace", "webflow",
+    "/sites/default/files/",   # Drupal upload path
+    "cookiebot", "onetrust", "cookiepro",
+    "google-analytics", "googletagmanager",
+)
+
+
+def _same_base_domain(url_a: str, url_b: str) -> bool:
+    """True when both URLs share the same registrable domain (ignoring subdomains)."""
+    def base(u: str) -> str:
+        host = urlparse(u).netloc.lower().removeprefix("www.")
+        parts = host.split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+    return base(url_a) == base(url_b)
+
+
 def search_website(website_url: str, query: str = "") -> list[dict]:
     from bs4 import BeautifulSoup
 
@@ -295,6 +317,14 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
                 continue
 
             full_url = src if src.startswith("http") else urljoin(base, src)
+
+            # Skip images hosted on a different domain (e.g. Drupal CDN, CMS assets)
+            if not _same_base_domain(full_url, website_url):
+                continue
+            # Skip known CMS / platform logo paths
+            if any(p in full_url.lower() for p in _SCRAPE_BLOCKLIST):
+                continue
+
             ext = full_url.split("?")[0].rsplit(".", 1)[-1].lower()
             if ext not in ("svg", "png", "webp"):
                 continue
@@ -338,6 +368,41 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
     return results
 
 
+# ── Logo scoring ─────────────────────────────────────────────────────────────
+
+_SOURCE_SCORES = {
+    "Simple Icons": 90,
+    "Clearbit": 85,
+    "Company Website": 80,
+    "World Vector Logo": 60,
+    "Wikipedia": 50,
+    "Company Website (favicon)": 30,
+}
+
+_STALE_KEYWORDS = ("historical", "vintage", "classic", "retro", "antique")
+
+
+def _score_logo(logo: dict) -> int:
+    score = _SOURCE_SCORES.get(logo["source"], 50)
+    name = logo["name"].lower()
+
+    if any(kw in name for kw in _STALE_KEYWORDS):
+        score -= 40
+    if re.search(r'\bold\b', name):
+        score -= 20
+
+    for yr_str in re.findall(r'\b((?:19|20)\d{2})\b', name):
+        if int(yr_str) < 2010:
+            score -= 30
+
+    if logo["source"] == "World Vector Logo":
+        m = re.search(r'-(\d+)\.svg$', logo["url"])
+        if m:
+            score -= int(m.group(1)) * 8
+
+    return score
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 _DOMAIN_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$")
@@ -368,39 +433,42 @@ def normalize_url(url: str) -> str:
 
 
 def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
-    """Search all sources and return deduplicated logo list."""
-    results: list[dict] = []
-
+    """Search all sources in parallel and return a deduplicated, scored logo list."""
     query = _clean_ticker(query)
 
-    # If the query looks like a domain, use it directly for domain-based sources
-    # and derive a plain company name for name-based sources.
     domain: Optional[str] = None
     name_query = query
     if _looks_like_domain(query):
-        domain = query.strip().lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        # e.g. "block.xyz" → "block"
+        domain = query.strip().lower().removeprefix("www.")
         name_query = domain.rsplit(".", 1)[0]
         if not website_url:
             website_url = normalize_url(query)
 
-    results.extend(search_simple_icons(name_query))
-    results.extend(search_wikimedia(name_query))
-    results.extend(search_worldvectorlogo(name_query))
-    results.extend(search_clearbit(name_query, domain=domain))
-
+    tasks: list = [
+        lambda: search_simple_icons(name_query),
+        lambda: search_wikimedia(name_query),
+        lambda: search_worldvectorlogo(name_query),
+        lambda nq=name_query, d=domain: search_clearbit(nq, domain=d),
+    ]
     if website_url:
-        website_url = normalize_url(website_url)
-        results.extend(search_website(website_url, query=name_query))
+        url = normalize_url(website_url)
+        tasks.append(lambda u=url, nq=name_query: search_website(u, query=nq))
 
-    # Deduplicate by URL
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+        for fut in as_completed(ex.submit(t) for t in tasks):
+            try:
+                results.extend(fut.result())
+            except Exception:
+                pass
+
     seen: set[str] = set()
     unique: list[dict] = []
     for logo in results:
         if logo["url"] not in seen:
             seen.add(logo["url"])
+            logo["score"] = _score_logo(logo)
             unique.append(logo)
 
+    unique.sort(key=lambda x: x["score"], reverse=True)
     return unique
