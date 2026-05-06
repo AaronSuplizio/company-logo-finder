@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 _IS_MAC = sys.platform == "darwin"
 
 from logo_finder import find_logos
+import logo_cache
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -80,9 +81,17 @@ def render_logo_stage(logo: dict):
         f'</div>',
         unsafe_allow_html=True,
     )
-    st.caption(
-        f"**{logo['name']}** &nbsp;·&nbsp; {logo['source']} &nbsp;·&nbsp; {logo['format'].upper()}"
-    )
+    if logo.get("cached"):
+        count = logo.get("accept_count", 1)
+        orig = logo.get("source_orig", "")
+        st.caption(
+            f"**{logo['name']}** &nbsp;·&nbsp; {orig} &nbsp;·&nbsp; {logo['format'].upper()}"
+            f" &nbsp;·&nbsp; 📁 from your archive &nbsp;·&nbsp; accepted {count}×"
+        )
+    else:
+        st.caption(
+            f"**{logo['name']}** &nbsp;·&nbsp; {logo['source']} &nbsp;·&nbsp; {logo['format'].upper()}"
+        )
 
 
 def render_thumbnails(logos: list[dict], current_idx: int):
@@ -220,13 +229,18 @@ with st.form("search_form"):
     submitted = st.form_submit_button("Find Logos", type="primary")
 
 if submitted and query.strip():
+    q = query.strip()
+    cached = logo_cache.get_logos(q)
     with st.spinner("Searching for logos…"):
-        logos = find_logos(query.strip())
+        fresh = find_logos(q)
+    # Cached logos first; skip any that also appear in fresh results
+    cached_urls = {l["url"] for l in cached}
+    logos = cached + [l for l in fresh if l["url"] not in cached_urls]
     st.session_state.logos = logos
     st.session_state.carousel_idx = 0
     st.session_state.accepted_logo = None
     st.session_state.search_done = True
-    st.session_state.last_query = query.strip()
+    st.session_state.last_query = q
     st.session_state.save_msg = ""
 
 # ── STEP 2 ────────────────────────────────────────────────────────────────────
@@ -261,6 +275,7 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
                 st.rerun()
         with col_accept:
             if st.button("✓  Accept This Logo", type="primary", use_container_width=True):
+                logo_cache.save_logo(st.session_state.last_query, logos[idx])
                 st.session_state.accepted_logo = logos[idx]
                 st.rerun()
         with col_next:
