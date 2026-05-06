@@ -39,7 +39,7 @@ def _hyphen_slug(name: str) -> str:
 
 def _guess_domains(query: str) -> list[str]:
     bases = {_simple_slug(query), _hyphen_slug(query)}
-    tlds = [".com", ".io", ".co", ".ai", ".net", ".org"]
+    tlds = [".com", ".io", ".co", ".ai", ".net", ".org", ".xyz", ".app", ".dev"]
     domains = []
     for base in sorted(bases):
         if base:
@@ -342,8 +342,22 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
 
 _DOMAIN_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$")
 
+# Matches "NYSE: $SQ", "$AAPL", "NASDAQ:MSFT", etc.
+_TICKER_RE = re.compile(r'^(?:[A-Za-z]{1,10}:\s*)?\$?([A-Za-z]{1,5})$')
+
 def _looks_like_domain(s: str) -> bool:
     return bool(_DOMAIN_RE.match(s.strip())) and " " not in s.strip()
+
+def _clean_ticker(query: str) -> str:
+    """Strip exchange prefix and $ from ticker-format queries.
+    'NYSE: $SQ' → 'SQ',  '$AAPL' → 'AAPL',  others unchanged.
+    """
+    q = query.strip()
+    if '$' in q or ':' in q:
+        m = _TICKER_RE.match(q)
+        if m:
+            return m.group(1)
+    return q
 
 def normalize_url(url: str) -> str:
     """Ensure a URL has a scheme; default to https://."""
@@ -357,13 +371,17 @@ def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
     """Search all sources and return deduplicated logo list."""
     results: list[dict] = []
 
+    query = _clean_ticker(query)
+
     # If the query looks like a domain, use it directly for domain-based sources
     # and derive a plain company name for name-based sources.
     domain: Optional[str] = None
     name_query = query
     if _looks_like_domain(query):
-        domain = query.strip().lstrip("www.").lower()
-        # e.g. "arkero.ai" → "arkero"
+        domain = query.strip().lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        # e.g. "block.xyz" → "block"
         name_query = domain.rsplit(".", 1)[0]
         if not website_url:
             website_url = normalize_url(query)

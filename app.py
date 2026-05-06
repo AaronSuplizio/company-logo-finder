@@ -304,7 +304,7 @@ if st.session_state.accepted_logo:
                 st.rerun()
 
     st.markdown("&nbsp;")
-    col_save, col_dl, col_restart = st.columns([2, 2, 1])
+    col_save, col_copy, col_dl, col_restart = st.columns([2, 2, 2, 1])
 
     with col_save:
         if st.button("💾  Save to Directory", type="primary", use_container_width=True):
@@ -314,6 +314,52 @@ if st.session_state.accepted_logo:
             except Exception as exc:
                 st.session_state.save_msg = f"❌ Error: {exc}"
             st.rerun()
+
+    with col_copy:
+        data_url = _data_url(logo)
+        components.html(f"""
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:transparent; }}
+button {{
+    width:100%; height:38px;
+    background:white; color:rgb(49,51,63);
+    border:1px solid rgba(49,51,63,0.2); border-radius:0.5rem;
+    font-size:14px; font-family:"Source Sans Pro",sans-serif;
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+    gap:6px; transition:border-color .15s,color .15s;
+}}
+button:hover {{ border-color:rgb(255,75,75); color:rgb(255,75,75); }}
+button.ok  {{ border-color:#2e7d32; color:#2e7d32; }}
+button.err {{ border-color:#c62828; color:#c62828; }}
+</style>
+<button id="b" onclick="go()">📋 Copy to Clipboard</button>
+<script>
+var SRC = "{data_url}";
+function go() {{
+    var b = document.getElementById('b');
+    var img = new Image();
+    img.onload = function() {{
+        var c = document.createElement('canvas');
+        c.width  = img.naturalWidth  || 512;
+        c.height = img.naturalHeight || 512;
+        c.getContext('2d').drawImage(img, 0, 0);
+        c.toBlob(function(blob) {{
+            navigator.clipboard.write([new ClipboardItem({{'image/png': blob}})])
+            .then(function() {{
+                b.innerHTML = '✓ Copied!'; b.className = 'ok';
+                setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 2000);
+            }})
+            .catch(function() {{
+                b.innerHTML = '✗ Failed'; b.className = 'err';
+                setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 2500);
+            }});
+        }}, 'image/png');
+    }};
+    img.src = SRC;
+}}
+</script>
+""", height=40)
 
     with col_dl:
         filename = _safe_filename(logo["name"], logo["format"])
