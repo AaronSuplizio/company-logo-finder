@@ -63,12 +63,12 @@ st.markdown("""
     }
 
     /* Accept button — green */
-    button[data-testid="baseButton-primary"] {
+    div.st-key-accept_btn button {
         background-color: #2e7d32 !important;
         border-color: #2e7d32 !important;
         color: white !important;
     }
-    button[data-testid="baseButton-primary"]:hover {
+    div.st-key-accept_btn button:hover {
         background-color: #1b5e20 !important;
         border-color: #1b5e20 !important;
     }
@@ -296,7 +296,7 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
                 st.session_state.carousel_idx -= 1
                 st.rerun()
         with col_accept:
-            if st.button("✓  Accept This Logo", type="primary", use_container_width=True):
+            if st.button("👍  Accept This Logo", key="accept_btn", use_container_width=True):
                 logo_cache.save_logo(st.session_state.last_query, logos[idx])
                 st.session_state.accepted_logo = logos[idx]
                 st.rerun()
