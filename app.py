@@ -394,7 +394,7 @@ function fallback(b) {{
         )
 
     with col_restart:
-        if st.button("🔄 Restart", use_container_width=True):
+        if st.button("🔍 New Search", use_container_width=True):
             for k, v in _DEFAULTS.items():
                 st.session_state[k] = v
             st.rerun()
