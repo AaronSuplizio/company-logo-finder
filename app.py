@@ -4,10 +4,13 @@ LogoLift — Streamlit app
 
 import base64
 import re
+import sys
 from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+_IS_MAC = sys.platform == "darwin"
 
 from logo_finder import find_logos
 
@@ -278,42 +281,45 @@ if st.session_state.accepted_logo:
     render_logo_stage(logo)
     st.markdown("&nbsp;")
 
-    # Directory chooser.
-    # dir_version increments whenever Browse picks a new path, giving the text
-    # input a brand-new key so Streamlit always honors value= on that render.
-    dir_key = f"dir_input_{st.session_state.dir_version}"
+    if _IS_MAC:
+        # Directory chooser — local macOS only.
+        # dir_version increments whenever Browse picks a new path, giving the text
+        # input a brand-new key so Streamlit always honors value= on that render.
+        dir_key = f"dir_input_{st.session_state.dir_version}"
 
-    def _sync_dir():
-        st.session_state.save_dir = st.session_state[dir_key]
+        def _sync_dir():
+            st.session_state.save_dir = st.session_state[dir_key]
 
-    col_dir, col_browse = st.columns([5, 1])
-    with col_dir:
-        st.text_input(
-            "Save directory",
-            value=st.session_state.save_dir,
-            key=dir_key,
-            on_change=_sync_dir,
-        )
-    with col_browse:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Browse…"):
-            chosen = open_dir_picker()
-            if chosen:
-                st.session_state.save_dir = chosen
-                st.session_state.dir_version += 1  # new key → fresh widget
-                st.rerun()
+        col_dir, col_browse = st.columns([5, 1])
+        with col_dir:
+            st.text_input(
+                "Save directory",
+                value=st.session_state.save_dir,
+                key=dir_key,
+                on_change=_sync_dir,
+            )
+        with col_browse:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Browse…"):
+                chosen = open_dir_picker()
+                if chosen:
+                    st.session_state.save_dir = chosen
+                    st.session_state.dir_version += 1  # new key → fresh widget
+                    st.rerun()
 
     st.markdown("&nbsp;")
-    col_save, col_copy, col_dl, col_restart = st.columns([2, 2, 2, 1])
+    cols = st.columns([2, 2, 2, 1]) if _IS_MAC else st.columns([2, 2, 1])
+    col_save, col_copy, col_dl, col_restart = (cols if _IS_MAC else [None] + cols)
 
-    with col_save:
-        if st.button("💾  Save to Directory", type="primary", use_container_width=True):
-            try:
-                path = save_logo_to_dir(logo, st.session_state.save_dir)
-                st.session_state.save_msg = f"✅ Saved: `{path}`"
-            except Exception as exc:
-                st.session_state.save_msg = f"❌ Error: {exc}"
-            st.rerun()
+    if _IS_MAC:
+        with col_save:
+            if st.button("💾  Save to Directory", type="primary", use_container_width=True):
+                try:
+                    path = save_logo_to_dir(logo, st.session_state.save_dir)
+                    st.session_state.save_msg = f"✅ Saved: `{path}`"
+                except Exception as exc:
+                    st.session_state.save_msg = f"❌ Error: {exc}"
+                st.rerun()
 
     with col_copy:
         data_url = _data_url(logo)
@@ -393,5 +399,5 @@ function fallback(b) {{
                 st.session_state[k] = v
             st.rerun()
 
-    if st.session_state.save_msg:
+    if _IS_MAC and st.session_state.save_msg:
         st.markdown(st.session_state.save_msg)
