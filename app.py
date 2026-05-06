@@ -338,26 +338,33 @@ button.err {{ border-color:#c62828; color:#c62828; }}
 var SRC = "{data_url}";
 function go() {{
     var b = document.getElementById('b');
-    var img = new Image();
-    img.onload = function() {{
-        var c = document.createElement('canvas');
-        c.width  = img.naturalWidth  || 512;
-        c.height = img.naturalHeight || 512;
-        c.getContext('2d').drawImage(img, 0, 0);
-        c.toBlob(function(blob) {{
-            // Use parent frame's clipboard to bypass iframe sandbox on iOS
-            var clip = (window.parent && window.parent.navigator && window.parent.navigator.clipboard)
-                       || navigator.clipboard;
-            if (!clip) {{ fallback(b); return; }}
-            clip.write([new ClipboardItem({{'image/png': blob}})])
-            .then(function() {{
-                b.innerHTML = '✓ Copied!'; b.className = 'ok';
-                setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 2000);
-            }})
-            .catch(function() {{ fallback(b); }});
-        }}, 'image/png');
-    }};
-    img.src = SRC;
+    var clip = (window.parent && window.parent.navigator && window.parent.navigator.clipboard)
+               || navigator.clipboard;
+    if (!clip) {{ fallback(b); return; }}
+
+    // Resolve the blob asynchronously but call clipboard.write() NOW so iOS
+    // keeps the user-gesture context alive through the promise chain.
+    var blobPromise = new Promise(function(resolve, reject) {{
+        var img = new Image();
+        img.onload = function() {{
+            var c = document.createElement('canvas');
+            c.width  = img.naturalWidth  || 512;
+            c.height = img.naturalHeight || 512;
+            c.getContext('2d').drawImage(img, 0, 0);
+            c.toBlob(function(blob) {{
+                blob ? resolve(blob) : reject(new Error('toBlob failed'));
+            }}, 'image/png');
+        }};
+        img.onerror = reject;
+        img.src = SRC;
+    }});
+
+    clip.write([new ClipboardItem({{'image/png': blobPromise}})])
+    .then(function() {{
+        b.innerHTML = '✓ Copied!'; b.className = 'ok';
+        setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 2000);
+    }})
+    .catch(function() {{ fallback(b); }});
 }}
 function fallback(b) {{
     var ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
