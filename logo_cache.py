@@ -93,6 +93,22 @@ def get_logos(query: str, limit: int = 5) -> list[dict]:
     return results
 
 
+def get_downvoted_urls(query: str) -> set[str]:
+    key = _normalize(query)
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT url FROM logos
+            WHERE downvoted = 1
+              AND (query_key = ?
+                   OR instr(query_key, ?) > 0
+                   OR instr(?, query_key) > 0)
+            """,
+            (key, key, key),
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
 def downvote_logo(query: str, logo: dict) -> None:
     key = _normalize(query)
     with _connect() as conn:

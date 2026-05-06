@@ -253,11 +253,14 @@ with st.form("search_form"):
 if submitted and query.strip():
     q = query.strip()
     cached = logo_cache.get_logos(q)
+    downvoted_urls = logo_cache.get_downvoted_urls(q)
     with st.spinner("Searching for logos…"):
         fresh = find_logos(q)
-    # Cached logos first; skip any that also appear in fresh results
+    # Order: accepted archive → normal fresh → downvoted fresh (last, but not excluded)
     cached_urls = {l["url"] for l in cached}
-    logos = cached + [l for l in fresh if l["url"] not in cached_urls]
+    fresh_new = [l for l in fresh if l["url"] not in cached_urls and l["url"] not in downvoted_urls]
+    fresh_downvoted = [l for l in fresh if l["url"] not in cached_urls and l["url"] in downvoted_urls]
+    logos = cached + fresh_new + fresh_downvoted
     st.session_state.logos = logos
     st.session_state.carousel_idx = 0
     st.session_state.accepted_logo = None
