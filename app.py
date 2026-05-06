@@ -211,7 +211,7 @@ st.subheader("Step 1 — Search")
 with st.form("search_form"):
     query = st.text_input(
         "Company name, ticker symbol, or domain",
-        placeholder="e.g.  Apple   |   TSLA   |   stripe.com   |   arkero.ai",
+        placeholder="e.g.  Apple   |   TSLA   |   stripe.com   |   openai.com",
         key="query_input",
     )
     submitted = st.form_submit_button("Find Logos", type="primary")
