@@ -345,18 +345,26 @@ function go() {{
         c.height = img.naturalHeight || 512;
         c.getContext('2d').drawImage(img, 0, 0);
         c.toBlob(function(blob) {{
-            navigator.clipboard.write([new ClipboardItem({{'image/png': blob}})])
+            // Use parent frame's clipboard to bypass iframe sandbox on iOS
+            var clip = (window.parent && window.parent.navigator && window.parent.navigator.clipboard)
+                       || navigator.clipboard;
+            if (!clip) {{ fallback(b); return; }}
+            clip.write([new ClipboardItem({{'image/png': blob}})])
             .then(function() {{
                 b.innerHTML = '✓ Copied!'; b.className = 'ok';
                 setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 2000);
             }})
-            .catch(function() {{
-                b.innerHTML = '✗ Failed'; b.className = 'err';
-                setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 2500);
-            }});
+            .catch(function() {{ fallback(b); }});
         }}, 'image/png');
     }};
     img.src = SRC;
+}}
+function fallback(b) {{
+    var ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+    b.innerHTML = ios ? '☝️ Press & hold logo to copy' : '✗ Copy failed — try downloading';
+    b.className = 'err';
+    setTimeout(function() {{ b.innerHTML = '📋 Copy to Clipboard'; b.className = ''; }}, 3500);
 }}
 </script>
 """, height=40)
