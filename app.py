@@ -12,8 +12,10 @@ import streamlit.components.v1 as components
 
 _IS_MAC = sys.platform == "darwin"
 
+import os
 from logo_finder import find_logos
 import logo_cache
+import gemini_search
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -226,12 +228,26 @@ _DEFAULTS: dict = {
     "save_dir": str(Path.home() / "Downloads"),
     "save_msg": "",
     "dir_version": 0,
+    "gemini_msg": "",
 }
 
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
+# ── Sidebar — Gemini API key ──────────────────────────────────────────────────
+
+with st.sidebar:
+    st.header("✨ Gemini")
+    st.caption("Optional — unlocks the **Try Gemini** fallback button.")
+    _env_key = os.environ.get("GEMINI_API_KEY", "")
+    _gemini_key = st.text_input(
+        "Gemini API Key",
+        value=_env_key,
+        type="password",
+        placeholder="AIza…",
+        help="Free key from aistudio.google.com",
+    )
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -267,6 +283,7 @@ if submitted and query.strip():
     st.session_state.search_done = True
     st.session_state.last_query = q
     st.session_state.save_msg = ""
+    st.session_state.gemini_msg = ""
 
 # ── STEP 2 ────────────────────────────────────────────────────────────────────
 if st.session_state.search_done and not st.session_state.accepted_logo:
@@ -314,6 +331,32 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
             if st.button("Next →", disabled=(idx == total - 1), use_container_width=True):
                 st.session_state.carousel_idx += 1
                 st.rerun()
+
+        st.markdown("&nbsp;")
+        gemini_disabled = not bool(_gemini_key)
+        gemini_help = None if _gemini_key else "Add a Gemini API key in the sidebar to enable"
+        if st.button("✨ Try Google Gemini", disabled=gemini_disabled,
+                     help=gemini_help, use_container_width=True):
+            with st.spinner("Asking Gemini…"):
+                try:
+                    new_logos = gemini_search.find_logo_with_gemini(
+                        st.session_state.last_query, _gemini_key
+                    )
+                except Exception as exc:
+                    new_logos = []
+                    st.session_state.gemini_msg = f"❌ {exc}"
+            if new_logos:
+                existing_urls = {l["url"] for l in st.session_state.logos}
+                added = [l for l in new_logos if l["url"] not in existing_urls]
+                st.session_state.logos = added + st.session_state.logos
+                st.session_state.carousel_idx = 0
+                st.session_state.gemini_msg = f"✅ Gemini found {len(added)} new logo(s)." if added else "ℹ️ No new logos found."
+            elif not st.session_state.gemini_msg:
+                st.session_state.gemini_msg = "ℹ️ Gemini couldn't find additional logos."
+            st.rerun()
+
+        if st.session_state.gemini_msg:
+            st.caption(st.session_state.gemini_msg)
 
 # ── STEP 3 ────────────────────────────────────────────────────────────────────
 if st.session_state.accepted_logo:
