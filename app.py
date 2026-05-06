@@ -1,5 +1,5 @@
 """
-Company Logo Finder — Streamlit app
+LogoLift — Streamlit app
 """
 
 import base64
@@ -14,8 +14,8 @@ from logo_finder import find_logos
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Company Logo Finder",
-    page_icon="🔍",
+    page_title="LogoLift",
+    page_icon="🏋️",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -201,8 +201,8 @@ for _k, _v in _DEFAULTS.items():
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-st.title("🔍 Company Logo Finder")
-st.markdown("Search for a company and download its vector or transparent logo.")
+st.title("🏋️ LogoLift")
+st.markdown("Find, preview, and download any company logo in seconds.")
 st.divider()
 
 # ── STEP 1 ────────────────────────────────────────────────────────────────────
