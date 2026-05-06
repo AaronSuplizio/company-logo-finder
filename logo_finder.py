@@ -340,16 +340,42 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$")
+
+def _looks_like_domain(s: str) -> bool:
+    return bool(_DOMAIN_RE.match(s.strip())) and " " not in s.strip()
+
+def normalize_url(url: str) -> str:
+    """Ensure a URL has a scheme; default to https://."""
+    url = url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+
 def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
     """Search all sources and return deduplicated logo list."""
     results: list[dict] = []
 
-    results.extend(search_simple_icons(query))
-    results.extend(search_wikimedia(query))
-    results.extend(search_worldvectorlogo(query))
+    # If the query looks like a domain, use it directly for domain-based sources
+    # and derive a plain company name for name-based sources.
+    domain: Optional[str] = None
+    name_query = query
+    if _looks_like_domain(query):
+        domain = query.strip().lstrip("www.").lower()
+        # e.g. "arkero.ai" → "arkero"
+        name_query = domain.rsplit(".", 1)[0]
+        if not website_url:
+            website_url = normalize_url(query)
+
+    results.extend(search_simple_icons(name_query))
+    results.extend(search_wikimedia(name_query))
+    results.extend(search_worldvectorlogo(name_query))
+    results.extend(search_clearbit(name_query, domain=domain))
 
     if website_url:
-        results.extend(search_website(website_url, query=query))
+        website_url = normalize_url(website_url)
+        results.extend(search_website(website_url, query=name_query))
 
     # Deduplicate by URL
     seen: set[str] = set()

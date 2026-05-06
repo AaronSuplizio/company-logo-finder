@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from logo_finder import find_logos
 
@@ -51,6 +52,11 @@ st.markdown("""
     }
     h2 { margin-top: 0.5rem !important; }
     div[data-testid="stHorizontalBlock"] { align-items: center; }
+
+    /* Hover overlay for clickable thumbnails (button is moved inside .thumb-img by JS) */
+    .thumb-img button:hover {
+        background: rgba(0, 0, 0, 0.07) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -83,15 +89,69 @@ def render_thumbnails(logos: list[dict], current_idx: int):
         if i >= len(logos):
             break
         url = _data_url(logos[i])
-        border = "3px solid #2e7d32" if i == current_idx else "2px solid #ddd"
+        is_active = (i == current_idx)
+        border = "3px solid #2e7d32" if is_active else "2px solid #ddd"
         with col:
             st.markdown(
-                f'<div style="background:repeating-conic-gradient(#d0d0d0 0% 25%,#f8f8f8 0% 50%) '
-                f'0 0/10px 10px;border:{border};border-radius:8px;padding:6px;text-align:center;">'
+                f'<div class="thumb-img" style="background:repeating-conic-gradient(#d0d0d0 0% 25%,#f8f8f8 0% 50%) '
+                f'0 0/10px 10px;border:{border};border-radius:8px;padding:6px;text-align:center;position:relative;">'
                 f'<img src="{url}" style="max-height:48px;max-width:72px;object-fit:contain;" />'
                 f'</div>',
                 unsafe_allow_html=True,
             )
+            if not is_active:
+                if st.button("​", key=f"thumb_{i}", use_container_width=True):
+                    st.session_state.carousel_idx = i
+                    st.rerun()
+
+    # JS: move each button element inside its .thumb-img div so clicking the
+    # image triggers the button, then collapse the now-empty button wrappers.
+    components.html("""
+<script>
+(function () {
+    function patch() {
+        var doc = window.parent.document;
+        doc.querySelectorAll('.thumb-img').forEach(function (thumb) {
+            var col = thumb.closest('[data-testid="stColumn"]') || thumb.closest('[data-testid="column"]');
+            if (!col) return;
+            var bw = col.querySelector('[data-testid="stButton"]');
+            if (!bw) return;
+            var btn = bw.querySelector('button');
+            if (!btn) return;
+
+            // Already correctly patched — button is already inside thumb.
+            if (thumb.contains(btn)) return;
+
+            thumb.style.position = 'relative';
+            btn.style.cssText =
+                'position:absolute;inset:0;width:100%;height:100%;' +
+                'background:transparent;border:none;box-shadow:none;' +
+                'cursor:pointer;color:transparent;z-index:10;border-radius:8px;';
+
+            thumb.appendChild(btn);
+
+            // Collapse only the button's own wrappers — stop before any element
+            // that is also an ancestor of the thumbnail image (shared parent).
+            var el = bw;
+            while (el && el !== col) {
+                if (el.contains(thumb)) break;
+                el.style.height = '0';
+                el.style.minHeight = '0';
+                el.style.margin = '0';
+                el.style.padding = '0';
+                el.style.overflow = 'hidden';
+                el = el.parentElement;
+            }
+        });
+    }
+
+    patch();
+    new MutationObserver(patch).observe(
+        window.parent.document.body, {childList: true, subtree: true}
+    );
+}());
+</script>
+""", height=0)
 
 
 def open_dir_picker() -> "str | None":
@@ -127,7 +187,6 @@ _DEFAULTS: dict = {
     "logos": [],
     "carousel_idx": 0,
     "accepted_logo": None,
-    "show_website_input": False,
     "search_done": False,
     "last_query": "",
     "save_dir": str(Path.home() / "Downloads"),
@@ -149,13 +208,15 @@ st.divider()
 # ── STEP 1 ────────────────────────────────────────────────────────────────────
 st.subheader("Step 1 — Search")
 
-query = st.text_input(
-    "Company name, ticker symbol, or domain",
-    placeholder="e.g.  Apple   |   TSLA   |   stripe.com   |   OpenAI",
-    key="query_input",
-)
+with st.form("search_form"):
+    query = st.text_input(
+        "Company name, ticker symbol, or domain",
+        placeholder="e.g.  Apple   |   TSLA   |   stripe.com   |   arkero.ai",
+        key="query_input",
+    )
+    submitted = st.form_submit_button("Find Logos", type="primary")
 
-if st.button("Find Logos", type="primary", disabled=not query.strip()):
+if submitted and query.strip():
     with st.spinner("Searching for logos…"):
         logos = find_logos(query.strip())
     st.session_state.logos = logos
@@ -163,7 +224,6 @@ if st.button("Find Logos", type="primary", disabled=not query.strip()):
     st.session_state.accepted_logo = None
     st.session_state.search_done = True
     st.session_state.last_query = query.strip()
-    st.session_state.show_website_input = not logos
     st.session_state.save_msg = ""
 
 # ── STEP 2 ────────────────────────────────────────────────────────────────────
@@ -173,7 +233,12 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
     logos = st.session_state.logos
     idx = st.session_state.carousel_idx
 
-    if logos:
+    if not logos:
+        st.warning(
+            f"No logos found for **{st.session_state.last_query}**. "
+            "Try the company's domain (e.g. `arkero.ai`) or a different name."
+        )
+    else:
         total = len(logos)
         st.subheader("Step 2 — Preview & Select")
         st.markdown(f'<p class="counter">Option {idx + 1} of {total}</p>', unsafe_allow_html=True)
@@ -199,36 +264,6 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
             if st.button("Next →", disabled=(idx == total - 1), use_container_width=True):
                 st.session_state.carousel_idx += 1
                 st.rerun()
-
-        st.markdown("&nbsp;")
-        if st.button("None of these — search by website URL"):
-            st.session_state.show_website_input = True
-            st.rerun()
-
-    # Website-URL fallback
-    if not logos or st.session_state.show_website_input:
-        if not logos:
-            st.warning(f"No logos found for **{st.session_state.last_query}**.")
-
-        st.subheader("Search by Website URL")
-        st.markdown("Enter the company's official website so we can find the logo directly:")
-
-        website = st.text_input(
-            "Website URL", placeholder="https://www.company.com", key="website_input"
-        )
-
-        if st.button("Search Website", type="primary", disabled=not website.strip()):
-            with st.spinner("Scanning website for logos…"):
-                new_logos = find_logos(
-                    st.session_state.last_query, website_url=website.strip()
-                )
-            if new_logos:
-                st.session_state.logos = new_logos
-                st.session_state.carousel_idx = 0
-                st.session_state.show_website_input = False
-                st.rerun()
-            else:
-                st.error("No logos found at that URL. Try the company's main domain.")
 
 # ── STEP 3 ────────────────────────────────────────────────────────────────────
 if st.session_state.accepted_logo:
