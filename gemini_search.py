@@ -24,7 +24,8 @@ Company: "{query}"
 
 Reply with JSON only — no explanation, no markdown fences:
 {{
-  "official_name": "exact brand name used in their logo",
+  "official_name": "exact current brand name used in their logo",
+  "former_names": ["any previous brand names, e.g. if they rebranded"],
   "domain": "primary website domain, e.g. stripe.com",
   "svg_urls": ["direct URL to an SVG logo file if you are highly confident it exists"]
 }}
@@ -33,6 +34,7 @@ Rules:
 - svg_urls must be real, publicly accessible URLs you are confident about.
 - Leave svg_urls as an empty array if you are not certain.
 - Do not invent URLs.
+- former_names is important — many companies rebrand (e.g. Square → Block, Facebook → Meta).
 """
 
 
@@ -42,7 +44,7 @@ def find_logo_with_gemini(query: str, api_key: str) -> list[dict]:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=_PROMPT.format(query=query),
         )
         text = response.text or ""
@@ -60,6 +62,7 @@ def find_logo_with_gemini(query: str, api_key: str) -> list[dict]:
         return []
 
     official_name: str = data.get("official_name") or query
+    former_names: list[str] = data.get("former_names") or []
     domain: str = (data.get("domain") or "").strip().lower().removeprefix("www.")
     svg_urls: list[str] = data.get("svg_urls") or []
 
@@ -88,9 +91,13 @@ def find_logo_with_gemini(query: str, api_key: str) -> list[dict]:
         for logo in search_website(normalize_url(domain), query=official_name):
             _add(logo)
 
-    # Also retry Simple Icons with the corrected official name
-    if official_name.lower() != query.lower():
-        for logo in search_simple_icons(official_name):
-            _add(logo)
+    # Retry Simple Icons + WVL with official name and any former names
+    for name in [official_name] + former_names:
+        if name.lower() != query.lower():
+            for logo in search_simple_icons(name):
+                _add(logo)
+            from logo_finder import search_worldvectorlogo
+            for logo in search_worldvectorlogo(name):
+                _add(logo)
 
     return results
