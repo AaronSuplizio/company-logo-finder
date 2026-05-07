@@ -277,7 +277,7 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
     if not logos:
         st.warning(
             f"No logos found for **{st.session_state.last_query}**. "
-            "Try the company's domain (e.g. `arkero.ai`) or a different name."
+            "Try a different name or the company's domain (e.g. `stripe.com`)."
         )
     else:
         total = len(logos)
