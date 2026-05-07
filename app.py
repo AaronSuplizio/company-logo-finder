@@ -292,7 +292,7 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
 
         st.markdown("&nbsp;")
 
-        col_prev, col_accept, col_down, col_next = st.columns([1, 2, 2, 1])
+        col_prev, col_accept, col_down, col_new, col_next = st.columns([1, 2, 2, 2, 1])
         with col_prev:
             if st.button("← Prev", disabled=(idx == 0), use_container_width=True):
                 st.session_state.carousel_idx -= 1
@@ -308,6 +308,11 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
                 logos.pop(idx)
                 st.session_state.logos = logos
                 st.session_state.carousel_idx = min(idx, len(logos) - 1) if logos else 0
+                st.rerun()
+        with col_new:
+            if st.button("🔍  New Search", use_container_width=True):
+                for k, v in _DEFAULTS.items():
+                    st.session_state[k] = v
                 st.rerun()
         with col_next:
             if st.button("Next →", disabled=(idx == total - 1), use_container_width=True):
