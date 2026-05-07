@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 
-import google.generativeai as genai
+from google import genai
 
 from logo_finder import (
     _fetch_svg,
@@ -38,11 +38,13 @@ Rules:
 
 def find_logo_with_gemini(query: str, api_key: str) -> list[dict]:
     """Ask Gemini for domain + SVG URLs, validate each, return logo dicts."""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    client = genai.Client(api_key=api_key)
 
     try:
-        response = model.generate_content(_PROMPT.format(query=query))
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=_PROMPT.format(query=query),
+        )
         text = response.text or ""
     except Exception as exc:
         raise RuntimeError(f"Gemini API error: {exc}") from exc
