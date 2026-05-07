@@ -68,6 +68,36 @@ def _fetch_svg(url: str) -> Optional[bytes]:
     return None
 
 
+def _fetch_png(url: str) -> Optional[bytes]:
+    """Fetch a PNG and return it only if it has a transparency (alpha) channel."""
+    try:
+        r = requests.get(url, timeout=TIMEOUT, headers=HEADERS)
+        if r.status_code != 200 or len(r.content) < 300:
+            return None
+        ct = r.headers.get("content-type", "")
+        if "png" not in ct and not url.lower().split("?")[0].endswith(".png"):
+            return None
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(r.content))
+        if img.mode in ("RGBA", "LA", "PA"):
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_logo(url: str) -> tuple[Optional[bytes], str]:
+    """Try SVG first, then transparent PNG. Returns (content, format)."""
+    content = _fetch_svg(url)
+    if content:
+        return content, "svg"
+    content = _fetch_png(url)
+    if content:
+        return content, "png"
+    return None, ""
+
+
 def search_simple_icons(query: str) -> list[dict]:
     results = []
 
@@ -186,45 +216,41 @@ def search_wikimedia(query: str) -> list[dict]:
         }, timeout=8, headers=_WIKI_HEADERS)
         images = r2.json().get("parse", {}).get("images", [])
 
-        # Keep SVGs that contain "logo" and belong to the company (not Wiki system files)
+        # Keep SVGs and transparent PNGs that contain "logo" (skip Wiki system files)
         system = {"commons-logo", "wikinews-logo", "wikiquote-logo", "wikibooks-logo",
                   "wikiversity-logo", "wiktionary-logo", "wikivoyage-logo"}
-        q_slug = re.sub(r"[^a-z0-9]", "", query.lower())
-        logo_svgs = [
+        logo_files = [
             img for img in images
-            if img.lower().endswith(".svg")
+            if img.lower().endswith((".svg", ".png"))
             and "logo" in img.lower()
             and img.lower().replace("-", "").replace("_", "").replace(" ", "").split(".")[0] not in system
         ]
 
-        if not logo_svgs:
+        if not logo_files:
             return results
 
-        # Step 3: rank — prefer most recent year, then no year, skip "Historical"
-        def _svg_rank(name: str):
+        # SVGs first, then PNGs; within each group prefer recent years
+        def _file_rank(name: str):
+            ext_rank = 0 if name.lower().endswith(".svg") else 1
             n = name.lower()
             if "historical" in n or "wordmark" in n:
-                return (1, 0)
+                return (ext_rank, 1, 0)
             years = re.findall(r"\b(19|20)\d{2}\b", name)
-            return (0, -int(years[-1])) if years else (0, 1)
+            return (ext_rank, 0, -int(years[-1])) if years else (ext_rank, 0, 1)
 
-        logo_svgs.sort(key=_svg_rank)
+        logo_files.sort(key=_file_rank)
 
-        # Step 4: fetch URLs for top candidates
-        file_titles = [f"File:{img}" for img in logo_svgs[:4]]
+        file_titles = [f"File:{img}" for img in logo_files[:6]]
         r3 = requests.get(_WIKI_API, params={
             "action": "query", "titles": "|".join(file_titles),
             "prop": "imageinfo", "iiprop": "url", "format": "json",
         }, timeout=8, headers=_WIKI_HEADERS)
         pages = r3.json().get("query", {}).get("pages", {}).values()
 
-        # Preserve the ranked order
         url_map = {}
         for page in pages:
             info = page.get("imageinfo", [])
             if info:
-                # Wikipedia normalises spaces↔underscores; store with underscores so
-                # our lookup keys (built with underscores) always match.
                 title = page.get("title", "").replace(" ", "_")
                 url_map[title] = info[0]["url"]
 
@@ -232,13 +258,18 @@ def search_wikimedia(query: str) -> list[dict]:
             url = url_map.get(ft.replace(" ", "_"))
             if not url:
                 continue
-            content = _fetch_svg(url)
+            if ft.lower().endswith(".svg"):
+                content = _fetch_svg(url)
+                fmt = "svg"
+            else:
+                content = _fetch_png(url)
+                fmt = "png"
             if content:
                 name = ft.replace("File:", "").rsplit(".", 1)[0].replace("_", " ")
                 results.append({
                     "name": name,
                     "url": url,
-                    "format": "svg",
+                    "format": fmt,
                     "source": "Wikipedia",
                     "content": content,
                 })
@@ -258,7 +289,7 @@ def search_wikimedia_commons(query: str) -> list[dict]:
         # Try both "logo SVG" and "lockup SVG" — companies often store lockup variants
         seen_titles: set[str] = set()
         hits = []
-        for term in (f"{query} logo SVG", f"{query} lockup SVG", f"{query} lockup logo SVG"):
+        for term in (f"{query} logo", f"{query} lockup", f"{query} lockup logo"):
             r = requests.get(_COMMONS_API, params={
                 "action": "query", "list": "search",
                 "srsearch": term,
@@ -272,7 +303,8 @@ def search_wikimedia_commons(query: str) -> list[dict]:
         file_titles = []
         for hit in hits:
             t = hit["title"].lower()
-            if any(kw in t for kw in _COMMONS_LOGO_KEYWORDS) and \
+            if t.endswith((".svg", ".png")) and \
+               any(kw in t for kw in _COMMONS_LOGO_KEYWORDS) and \
                not any(kw in t for kw in _COMMONS_STALE_KEYWORDS):
                 file_titles.append(hit["title"])
 
@@ -290,13 +322,13 @@ def search_wikimedia_commons(query: str) -> list[dict]:
             if not info:
                 continue
             url = info[0]["url"].split("?")[0]  # strip UTM params
-            content = _fetch_svg(url)
+            content, fmt = _fetch_logo(url)
             if content:
                 name = page.get("title", "").replace("File:", "").rsplit(".", 1)[0].replace("_", " ")
                 results.append({
                     "name": name,
                     "url": url,
-                    "format": "svg",
+                    "format": fmt,
                     "source": "Wikimedia Commons",
                     "content": content,
                 })
