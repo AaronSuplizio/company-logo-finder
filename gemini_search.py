@@ -17,6 +17,7 @@ from logo_finder import (
     search_clearbit,
     search_simple_icons,
     search_website,
+    search_wikimedia_commons,
 )
 
 _PROMPT = """You are helping find an official company logo SVG file.
@@ -91,13 +92,15 @@ def find_logo_with_gemini(query: str, api_key: str) -> list[dict]:
         for logo in search_website(normalize_url(domain), query=official_name):
             _add(logo)
 
-    # Retry Simple Icons + WVL with official name and any former names
+    # Retry all name-based sources with official name and any former names
+    from logo_finder import search_worldvectorlogo
     for name in [official_name] + former_names:
         if name.lower() != query.lower():
             for logo in search_simple_icons(name):
                 _add(logo)
-            from logo_finder import search_worldvectorlogo
             for logo in search_worldvectorlogo(name):
                 _add(logo)
+        for logo in search_wikimedia_commons(name):
+            _add(logo)
 
     return results

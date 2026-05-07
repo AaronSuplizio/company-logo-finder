@@ -247,6 +247,64 @@ def search_wikimedia(query: str) -> list[dict]:
     return results
 
 
+# ── Source 3b: Wikimedia Commons direct search ───────────────────────────────
+
+_COMMONS_LOGO_KEYWORDS = ("logo", "lockup", "wordmark", "brand", "icon")
+_COMMONS_STALE_KEYWORDS = ("historical", "old", "vintage", "former", "previous")
+
+def search_wikimedia_commons(query: str) -> list[dict]:
+    results = []
+    try:
+        # Try both "logo SVG" and "lockup SVG" — companies often store lockup variants
+        seen_titles: set[str] = set()
+        hits = []
+        for term in (f"{query} logo SVG", f"{query} lockup SVG", f"{query} lockup logo SVG"):
+            r = requests.get(_COMMONS_API, params={
+                "action": "query", "list": "search",
+                "srsearch": term,
+                "srnamespace": 6, "format": "json", "srlimit": 5,
+            }, timeout=8, headers=_WIKI_HEADERS)
+            for h in r.json().get("query", {}).get("search", []):
+                if h["title"] not in seen_titles:
+                    seen_titles.add(h["title"])
+                    hits.append(h)
+
+        file_titles = []
+        for hit in hits:
+            t = hit["title"].lower()
+            if any(kw in t for kw in _COMMONS_LOGO_KEYWORDS) and \
+               not any(kw in t for kw in _COMMONS_STALE_KEYWORDS):
+                file_titles.append(hit["title"])
+
+        if not file_titles:
+            return results
+
+        r2 = requests.get(_COMMONS_API, params={
+            "action": "query", "titles": "|".join(file_titles[:10]),
+            "prop": "imageinfo", "iiprop": "url", "format": "json",
+        }, timeout=8, headers=_WIKI_HEADERS)
+        pages = r2.json().get("query", {}).get("pages", {}).values()
+
+        for page in pages:
+            info = page.get("imageinfo", [])
+            if not info:
+                continue
+            url = info[0]["url"].split("?")[0]  # strip UTM params
+            content = _fetch_svg(url)
+            if content:
+                name = page.get("title", "").replace("File:", "").rsplit(".", 1)[0].replace("_", " ")
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "format": "svg",
+                    "source": "Wikimedia Commons",
+                    "content": content,
+                })
+    except Exception:
+        pass
+    return results
+
+
 # ── Source 4: Clearbit Logo API ───────────────────────────────────────────────
 
 def search_clearbit(query: str, domain: Optional[str] = None) -> list[dict]:
@@ -374,6 +432,7 @@ _SOURCE_SCORES = {
     "Simple Icons": 90,
     "Clearbit": 85,
     "Company Website": 80,
+    "Wikimedia Commons": 65,
     "World Vector Logo": 60,
     "Wikipedia": 50,
     "Company Website (favicon)": 30,
@@ -447,6 +506,7 @@ def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
     tasks: list = [
         lambda: search_simple_icons(name_query),
         lambda: search_wikimedia(name_query),
+        lambda: search_wikimedia_commons(name_query),
         lambda: search_worldvectorlogo(name_query),
         lambda nq=name_query, d=domain: search_clearbit(nq, domain=d),
     ]
