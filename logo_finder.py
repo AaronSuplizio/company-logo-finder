@@ -113,29 +113,30 @@ def search_simple_icons(query: str) -> list[dict]:
                 title = icon.get("title", "")
                 t = title.lower()
                 if t == q:
-                    ranked.insert(0, (0, icon))
+                    ranked.insert(0, (0, "exact", icon))
                 # Substring match only when both sides are substantial (≥4 chars)
                 # to avoid short titles like "C" or "R" matching inside longer queries
                 elif len(t) >= 4 and len(q) >= 4 and (q in t or t in q):
-                    ranked.append((1, icon))
+                    ranked.append((1, "substring", icon))
             top = ranked[:5]
             def _fetch_icon(item):
-                _, icon = item
+                _, match_type, icon = item
                 slug = icon.get("slug") or _simple_slug(icon["title"])
                 url = _SIMPLE_ICONS_CDN.format(slug=slug)
                 content = _fetch_svg(url)
-                return (icon["title"], url, content) if content else None
+                return (icon["title"], url, content, match_type) if content else None
 
             with ThreadPoolExecutor(max_workers=len(top)) as ex:
                 for res in ex.map(_fetch_icon, top):
                     if res:
-                        title, url, content = res
+                        title, url, content, match_type = res
                         results.append({
                             "name": title,
                             "url": url,
                             "format": "svg",
                             "source": "Simple Icons",
                             "content": content,
+                            "match_type": match_type,
                         })
     except Exception:
         pass
@@ -490,6 +491,11 @@ def _score_logo(logo: dict) -> int:
         m = re.search(r'-(\d+)\.svg$', logo["url"])
         if m:
             score -= int(m.group(1)) * 8
+
+    # Penalize Simple Icons results that matched only as a substring (e.g. "AdBlock"
+    # surfacing when query is "block") — keep them below more authoritative source hits.
+    if logo["source"] == "Simple Icons" and logo.get("match_type") == "substring":
+        score -= 35
 
     return score
 
