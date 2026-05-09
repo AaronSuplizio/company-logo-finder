@@ -463,9 +463,9 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
 
 _SOURCE_SCORES = {
     "Simple Icons": 90,
+    "Wikimedia Commons": 88,
     "Clearbit": 85,
     "Company Website": 80,
-    "Wikimedia Commons": 65,
     "World Vector Logo": 60,
     "Wikipedia": 50,
     "Company Website (favicon)": 30,
