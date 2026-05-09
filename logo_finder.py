@@ -459,13 +459,138 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
     return results
 
 
+# ── Source 5: Press Kit pages ────────────────────────────────────────────────
+
+_PRESS_KIT_PATHS = [
+    "/brand", "/press", "/press-kit", "/media-kit",
+    "/brand-assets", "/assets/brand", "/about/brand",
+]
+
+def search_press_kit(domain: str, query: str) -> list[dict]:
+    """Probe common brand/press-kit paths on the company domain."""
+    base = f"https://{domain}"
+
+    def _probe(path: str) -> list[dict]:
+        logos = search_website(base + path, query=query)
+        for logo in logos:
+            logo["source"] = "Press Kit"
+        return logos
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        all_hits = [logo for batch in ex.map(_probe, _PRESS_KIT_PATHS) for logo in batch]
+
+    seen: set[str] = set()
+    results = []
+    for logo in all_hits:
+        if logo["url"] not in seen:
+            seen.add(logo["url"])
+            results.append(logo)
+    return results
+
+
+# ── Source 6: Logopedia (Fandom wiki) ────────────────────────────────────────
+
+_LOGOPEDIA_API = "https://logopedia.fandom.com/api.php"
+
+def search_logopedia(query: str) -> list[dict]:
+    results = []
+    try:
+        r = requests.get(_LOGOPEDIA_API, params={
+            "action": "query", "list": "search", "srsearch": query,
+            "format": "json", "srlimit": 1,
+        }, timeout=8, headers=_WIKI_HEADERS)
+        hits = r.json().get("query", {}).get("search", [])
+        if not hits:
+            return results
+
+        article_title = hits[0]["title"]
+        r2 = requests.get(_LOGOPEDIA_API, params={
+            "action": "parse", "page": article_title,
+            "prop": "images", "format": "json",
+        }, timeout=8, headers=_WIKI_HEADERS)
+        images = r2.json().get("parse", {}).get("images", [])
+
+        logo_files = [
+            img for img in images
+            if img.lower().endswith((".svg", ".png"))
+            and not any(kw in img.lower() for kw in _COMMONS_STALE_KEYWORDS)
+        ][:8]
+
+        if not logo_files:
+            return results
+
+        file_titles = [f"File:{img}" for img in logo_files]
+        r3 = requests.get(_LOGOPEDIA_API, params={
+            "action": "query", "titles": "|".join(file_titles),
+            "prop": "imageinfo", "iiprop": "url", "format": "json",
+        }, timeout=8, headers=_WIKI_HEADERS)
+        pages = r3.json().get("query", {}).get("pages", {}).values()
+
+        for page in pages:
+            info = page.get("imageinfo", [])
+            if not info:
+                continue
+            url = info[0]["url"]
+            content, fmt = _fetch_logo(url)
+            if content:
+                name = page.get("title", "").replace("File:", "").rsplit(".", 1)[0].replace("_", " ")
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "format": fmt,
+                    "source": "Logopedia",
+                    "content": content,
+                })
+    except Exception:
+        pass
+    return results
+
+
+# ── Source 7: GitHub brand repos ─────────────────────────────────────────────
+
+_GITHUB_RAW = "https://raw.githubusercontent.com"
+_GITHUB_BRAND_PATTERNS = [
+    "{org}/brand/main/logo.svg",
+    "{org}/brand/master/logo.svg",
+    "{org}/brand/main/logos/logo.svg",
+    "{org}/press-kit/main/logo.svg",
+    "{org}/brand-assets/main/logo.svg",
+    "{org}/brand/main/{org}.svg",
+]
+
+def search_github_brand(query: str) -> list[dict]:
+    orgs = list(dict.fromkeys(filter(None, [
+        _hyphen_slug(query), _simple_slug(query),
+    ])))
+    urls = [
+        f"{_GITHUB_RAW}/{pat.format(org=org)}"
+        for org in orgs
+        for pat in _GITHUB_BRAND_PATTERNS
+    ]
+
+    def _try(url: str):
+        content = _fetch_svg(url)
+        if content:
+            return {"name": f"{query} logo", "url": url, "format": "svg",
+                    "source": "GitHub Brand", "content": content}
+        return None
+
+    with ThreadPoolExecutor(max_workers=min(len(urls), 8)) as ex:
+        results = [r for r in ex.map(_try, urls) if r]
+
+    return results[:2]
+
+
 # ── Logo scoring ─────────────────────────────────────────────────────────────
 
 _SOURCE_SCORES = {
     "Simple Icons": 90,
     "Wikimedia Commons": 88,
+    "Press Kit": 85,
     "Clearbit": 85,
+    "GitHub Brand": 82,
     "Company Website": 80,
+    "Logopedia": 75,
     "World Vector Logo": 60,
     "Wikipedia": 50,
     "SVG Favicon": 30,
@@ -545,9 +670,14 @@ def find_logos(query: str, website_url: Optional[str] = None) -> list[dict]:
         lambda: search_simple_icons(name_query),
         lambda: search_wikimedia(name_query),
         lambda: search_wikimedia_commons(name_query),
+        lambda: search_logopedia(name_query),
         lambda: search_worldvectorlogo(name_query),
+        lambda: search_github_brand(name_query),
         lambda nq=name_query, d=domain: search_clearbit(nq, domain=d),
     ]
+    # Press kit: use confirmed domain or best-guess .com
+    press_domain = domain or f"{_simple_slug(name_query)}.com"
+    tasks.append(lambda d=press_domain, nq=name_query: search_press_kit(d, nq))
     if website_url:
         url = normalize_url(website_url)
         tasks.append(lambda u=url, nq=name_query: search_website(u, query=nq))
