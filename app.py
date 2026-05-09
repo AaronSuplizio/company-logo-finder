@@ -272,7 +272,8 @@ if st.session_state.search_done and not st.session_state.accepted_logo:
     st.divider()
 
     logos = st.session_state.logos
-    idx = st.session_state.carousel_idx
+    idx = min(st.session_state.carousel_idx, len(logos) - 1) if logos else 0
+    st.session_state.carousel_idx = idx
 
     if not logos:
         st.warning(
