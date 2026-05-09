@@ -449,7 +449,7 @@ def search_website(website_url: str, query: str = "") -> list[dict]:
                         "name": f"SVG icon – {parsed.netloc}",
                         "url": full_url,
                         "format": "svg",
-                        "source": "Company Website (favicon)",
+                        "source": "SVG Favicon",
                         "content": content,
                     })
 
@@ -468,7 +468,7 @@ _SOURCE_SCORES = {
     "Company Website": 80,
     "World Vector Logo": 60,
     "Wikipedia": 50,
-    "Company Website (favicon)": 30,
+    "SVG Favicon": 30,
 }
 
 _STALE_KEYWORDS = ("historical", "vintage", "classic", "retro", "antique")
